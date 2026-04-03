@@ -1,4 +1,5 @@
-# LemeHost 自动续期 使用文档
+# 在 Hugging Face 免费部署自动 LemeHost 续期
+# ⭐ **觉得有用？给个 Star 支持一下！**
 
 ## 📖 简介
 
@@ -181,6 +182,10 @@ https://你的用户名-你的项目名.hf.space/oyz
 ---
 
 ## ❓ 常见问题
+
+### Q: 为什么收不到 Telegram 通知？
+
+A: HuggingFace 网络限制无法直接访问 `api.telegram.org`，必须配置 `TG_API` 反代地址。可使用 Cloudflare Workers 自建反代。
 
 ### Q: 验证码识别成功率低怎么办？
 
