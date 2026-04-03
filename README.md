@@ -21,7 +21,7 @@
    - **Space name**：随便取，比如 `lemehost`
    - **SDK**：选择 **Gradio**
    - **Hardware**：选 **Free CPU basic**
-   - **Visibility**：选 **公共**
+   - **Visibility**：选 **Public**
 3. 点击 **Create Space**
 
 ### 第二步：上传文件
