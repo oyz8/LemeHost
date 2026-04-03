@@ -1,4 +1,4 @@
-# 在 Hugging Face 免费部署自动 LemeHost 续期
+# 在 Hugging Face 免费部署自动 LemeHost 续期 带自动开机功能
 # ⭐ **觉得有用？给个 Star 支持一下！**
 
 ## 📖 简介
@@ -20,13 +20,32 @@
 2. 填写：
    - **Space name**：随便取，比如 `lemehost`
    - **SDK**：选择 **Gradio**
-   - **Hardware**：选 **Free CPU basic**
+   - **Hardware**：选 **Free CPU Basic**
    - **Visibility**：选 **Public**
 3. 点击 **Create Space**
 
-### 第二步：创建文件
+### 第二步：配置环境变量
 
-在 Space 里创建以下文件：
+> ⚠️ **先配置环境变量，再上传文件**，否则启动时读不到配置
+
+1. 进入 Space 页面
+2. 点击右上角 **⚙️ Settings**
+3. 找到 **Variables and secrets** 区域
+4. 点击 **New secret** 添加以下变量：
+
+| 变量名 | 值 | 必填 | 说明 |
+|--------|-----|------|------|
+| `LEME` | `邮箱-----密码` | ✅ 必填 | LemeHost 账号密码 |
+| `TG_BOT_TOKEN` | Bot Token | 推荐 | Telegram 机器人 Token |
+| `TG_CHAT_ID` | Chat ID | 推荐 | Telegram 聊天 ID |
+| `TG_API` | 反代地址 | 推荐 | TG API 反代（HF 无法直连） |
+| `PROJECT_URL` | Space URL | 推荐 | 保活防休眠 |
+| `CHECK_INTERVAL` | `300` | 可选 | 检查间隔秒数，默认 300 |
+| `RENEW_THRESHOLD` | `900` | 可选 | 续期阈值秒数，默认 900 |
+
+### 第三步：创建文件
+
+在 Space 里点击 **Files** → **Add file** → **Create a new file**，创建以下 3 个文件：
 
 #### `README.md`
 
@@ -55,22 +74,6 @@ websocket-client>=1.6.0
 #### `app.py`
 
 把完整的 `app.py` 代码粘贴进去
-
-### 第三步：配置环境变量
-
-1. 进入 Space 页面
-2. 点击右上角 **⚙️ Settings**
-3. 找到 **Variables and secrets** 区域
-4. 点击 **New secret** 添加以下变量：
-
-| 变量名 | 值 | 必填 | 说明 |
-|--------|-----|------|------|
-| `LEME` | `邮箱-----密码` | ✅ 必填 | LemeHost 账号 |
-| `TG_BOT_TOKEN` | Bot Token | 可选 | Telegram 机器人 Token |
-| `TG_CHAT_ID` | Chat ID | 可选 | Telegram 聊天 ID |
-| `PROJECT_URL` | Space URL | 可选 | 保活用 |
-| `CHECK_INTERVAL` | `300` | 可选 | 检查间隔（秒），默认300 |
-| `RENEW_THRESHOLD` | `900` | 可选 | 续期阈值（秒），默认900 |
 
 ### 第四步：等待启动
 
@@ -233,3 +236,9 @@ A: 脚本已自动支持续期验证码识别，最多重试 30 次。
      e. 倒计时 ≤ 15分钟 → 续期（有验证码则识别）
      f. 发送 TG 通知
 ```
+
+---
+
+## ⚠️ 免责声明
+
+本项目仅供学习研究使用。使用本脚本产生的任何后果由使用者自行承担。请遵守 LemeHost 的服务条款。
