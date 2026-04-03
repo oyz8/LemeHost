@@ -28,17 +28,24 @@ PROJECT_URL = os.environ.get("PROJECT_URL", "")
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "300"))
 RENEW_THRESHOLD = int(os.environ.get("RENEW_THRESHOLD", "900"))
 
+# ============================================================
+# 常量
+# ============================================================
 BASE_URL = "https://lemehost.com"
 LOGIN_URL = f"{BASE_URL}/site/login"
 SERVER_INDEX_URL = f"{BASE_URL}/server/index"
 MAX_LOGIN_RETRY = 30
 SIGNATURE = "Leme Host Auto Renewal"
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/146.0.0.0 Safari/537.36"
 )
 
+# ============================================================
+# 共享状态
+# ============================================================
 worker_status = {
     "status": "waiting", "accounts": 0, "servers": 0,
     "checks": 0, "renewals": 0, "skipped": 0, "failures": 0, "starts": 0,
@@ -48,14 +55,14 @@ worker_status = {
 log_queue = deque(maxlen=200)
 
 
-def add_log(msg):
+def add_log(msg: str):
     ts = datetime.now().strftime("%H:%M:%S")
     line = f"[{ts}] {msg}"
     print(line)
     log_queue.append(line)
 
 
-def mask(text):
+def mask(text: str) -> str:
     if not text:
         return "***"
     if "@" in text:
@@ -64,6 +71,9 @@ def mask(text):
     return "***"
 
 
+# ============================================================
+# 保活
+# ============================================================
 def add_keepalive_task():
     if not PROJECT_URL:
         worker_status["keepalive"] = "skipped"
@@ -77,7 +87,10 @@ def add_keepalive_task():
         add_log(f"[KEEP] ❌ {e}")
 
 
-def parse_accounts(raw):
+# ============================================================
+# 解析账号 / TG / 工具
+# ============================================================
+def parse_accounts(raw: str) -> list:
     accounts = []
     for line in raw.strip().splitlines():
         line = line.strip()
@@ -89,7 +102,7 @@ def parse_accounts(raw):
     return accounts
 
 
-def send_telegram(text):
+def send_telegram(text: str):
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         return
     try:
@@ -100,17 +113,17 @@ def send_telegram(text):
         add_log(f"[TG] ❌ {e}")
 
 
-def ts_to_cn(ts_ms):
+def ts_to_cn(ts_ms: int) -> str:
     dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone(timedelta(hours=8)))
     return dt.strftime("%Y年%m月%d日 %H时%M分")
 
 
-def ts_remaining(ts_ms):
+def ts_remaining(ts_ms: int) -> int:
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     return max(0, (ts_ms - now_ms) // 1000)
 
 
-def fmt_seconds(s):
+def fmt_seconds(s: int) -> str:
     if s <= 0:
         return "已过期"
     if s < 60:
@@ -120,17 +133,18 @@ def fmt_seconds(s):
     return f"{s // 3600}时{(s % 3600) // 60}分"
 
 
-def fmt_runtime(start):
+def fmt_runtime(start: float) -> str:
     if not start:
         return "--"
     m = (time.time() - start) / 60
     return f"{m:.0f}分" if m < 60 else f"{m / 60:.1f}时"
 
+
 # ============================================================
-# 续期核心类
+# 续期核心类（每个账号独立实例）
 # ============================================================
 class LemeHostRenewer:
-    def __init__(self, email, password):
+    def __init__(self, email: str, password: str):
         self.email = email
         self.password = password
         self.session = requests.Session()
@@ -145,31 +159,42 @@ class LemeHostRenewer:
         self.logged_in = False
         self._started_servers = set()
 
-    def _ex(self, pattern, html):
+    def _ex(self, pattern: str, html: str) -> str:
         m = re.search(pattern, html)
         return m.group(1) if m else ""
 
-    def _solve_captcha(self, cap_url, min_len=6, max_len=7, max_try=1):
-        """验证码识别"""
-        try:
-            img_resp = self.session.get(cap_url, timeout=15)
-            result = self.ocr.classification(img_resp.content)
-            clean = re.sub(r'[^a-zA-Z]', '', result or '')
-            if re.match(rf'^[a-zA-Z]{{{min_len},{max_len}}}$', clean):
-                add_log(f"    [OCR] '{clean}'")
-                return clean
-            add_log(f"    [OCR] '{result}' (无效)")
-        except Exception as e:
-            add_log(f"    [OCR] 异常: {e}")
+    def _solve_captcha(self, cap_url, min_len=6, max_len=6, max_try=15):
+        """通用验证码识别"""
+        for ct in range(1, max_try + 1):
+            try:
+                img_resp = self.session.get(cap_url, timeout=15)
+                result = self.ocr.classification(img_resp.content)
+                if result and re.match(rf'^[a-zA-Z]{{{min_len},{max_len}}}$', result):
+                    add_log(f"    [OCR] #{ct}: '{result}' ✅")
+                    return result
+                else:
+                    add_log(f"    [OCR] #{ct}: '{result}' (非{min_len}-{max_len}位)")
+            except Exception as e:
+                add_log(f"    [OCR] #{ct}: 异常 {e}")
+            try:
+                ref = self.session.get(f"{BASE_URL}/site/captcha?refresh=1", timeout=10)
+                u = ref.json().get("url", "")
+                if u:
+                    cap_url = u if u.startswith("http") else BASE_URL + u
+            except Exception:
+                pass
+            time.sleep(random.uniform(0.3, 0.6))
         return ""
 
-    def login(self):
+    # ── 登录 ──
+    def login(self) -> bool:
+        total_captcha = [0]
         for attempt in range(1, MAX_LOGIN_RETRY + 1):
             add_log(f"[LOGIN] 尝试 {attempt}/{MAX_LOGIN_RETRY}: {mask(self.email)}")
             try:
                 try:
                     self.session.get(BASE_URL, timeout=15)
-                    time.sleep(random.uniform(0.5, 1))
+                    time.sleep(random.uniform(1, 2))
                 except Exception:
                     pass
 
@@ -177,9 +202,12 @@ class LemeHostRenewer:
                 html = resp.text
 
                 if "loginform-email" not in html:
-                    if len(html) < 1000:
-                        time.sleep(10 + attempt * 2)
+                    if "challenge" in html.lower() or "cloudflare" in html.lower() or len(html) < 1000:
+                        wait = 10 + attempt * 3
+                        add_log(f"[LOGIN] ⚠️ CF 拦截，等待 {wait}s...")
+                        time.sleep(wait)
                     else:
+                        add_log("[LOGIN] ❌ 登录页无表单")
                         time.sleep(3)
                     continue
 
@@ -187,6 +215,7 @@ class LemeHostRenewer:
                 if not csrf:
                     csrf = self._ex(r'<meta\s+name="csrf-token"\s+content="([^"]+)"', html)
                 if not csrf:
+                    add_log("[LOGIN] ❌ CSRF 失败")
                     continue
 
                 key = self._ex(r'id="loginform-key"[^>]*value="([^"]*)"', html) or ""
@@ -196,38 +225,67 @@ class LemeHostRenewer:
                 if cap_url.startswith("/"):
                     cap_url = BASE_URL + cap_url
 
-                captcha = self._solve_captcha(cap_url)
+                # 识别验证码（严格6位字母）
+                captcha = ""
+                for ct in range(1, 6):
+                    total_captcha[0] += 1
+                    try:
+                        img_resp = self.session.get(cap_url, timeout=15)
+                        result = self.ocr.classification(img_resp.content)
+                        if result and re.match(r'^[a-zA-Z]{6,7}$', result):
+                            captcha = result
+                            add_log(f"  [OCR] #{total_captcha[0]}: '{result}' ✅")
+                            break
+                        else:
+                            add_log(f"  [OCR] #{total_captcha[0]}: '{result}' (非6-7位)")
+                    except Exception as e:
+                        add_log(f"  [OCR] #{total_captcha[0]}: 异常 {e}")
+                    try:
+                        ref = self.session.get(f"{BASE_URL}/site/captcha?refresh=1", timeout=10)
+                        u = ref.json().get("url", "")
+                        if u:
+                            cap_url = u if u.startswith("http") else BASE_URL + u
+                    except Exception:
+                        pass
+                    time.sleep(random.uniform(0.3, 0.6))
+
                 if not captcha:
+                    add_log("[LOGIN] ⏭️ 本轮无6位结果")
                     continue
 
                 resp = self.session.post(LOGIN_URL, data={
-                    "_csrf-frontend": csrf, "LoginForm[email]": self.email,
-                    "LoginForm[password]": self.password, "LoginForm[verifyCode]": captcha,
-                    "LoginForm[key]": key, "LoginForm[key2]": "",
-                    "LoginForm[rememberMe]": "1", "login-button": "",
+                    "_csrf-frontend": csrf,
+                    "LoginForm[email]": self.email,
+                    "LoginForm[password]": self.password,
+                    "LoginForm[verifyCode]": captcha,
+                    "LoginForm[key]": key,
+                    "LoginForm[key2]": "",
+                    "LoginForm[rememberMe]": "1",
+                    "login-button": "",
                 }, timeout=30, allow_redirects=True, headers={
                     "Referer": LOGIN_URL, "Origin": BASE_URL,
                     "Content-Type": "application/x-www-form-urlencoded",
                 })
 
                 if "Logout" in resp.text:
-                    add_log(f"[LOGIN] ✅ 成功: {mask(self.email)} (第{attempt}次)")
+                    add_log(f"[LOGIN] ✅ 成功: {mask(self.email)} (第{attempt}次, 共{total_captcha[0]}次OCR)")
                     self.logged_in = True
                     return True
                 if "verification code is incorrect" in resp.text.lower() or "Invalid CAPTCHA" in resp.text:
                     add_log(f"[LOGIN] ❌ 验证码错误 '{captcha}'")
-                    time.sleep(random.uniform(0.3, 0.8))
+                    time.sleep(random.uniform(0.5, 1.5))
                     continue
                 if "Incorrect email or password" in resp.text:
-                    add_log(f"[LOGIN] ❌ 密码错误")
+                    add_log(f"[LOGIN] ❌ 密码错误: {mask(self.email)}")
                     return False
             except Exception as e:
                 add_log(f"[LOGIN] ❌ 异常: {e}")
-                time.sleep(2)
+                time.sleep(random.uniform(3, 6))
+
         add_log(f"[LOGIN] ❌ 失败: {mask(self.email)}")
         return False
 
-    def ensure_login(self):
+    def ensure_login(self) -> bool:
         try:
             resp = self.session.get(SERVER_INDEX_URL, timeout=30)
             if "Logout" in resp.text:
@@ -246,7 +304,7 @@ class LemeHostRenewer:
         })
         return self.login()
 
-    def get_servers(self):
+    def get_servers(self) -> list:
         add_log("[SERVERS] 获取列表...")
         try:
             resp = self.session.get(SERVER_INDEX_URL, timeout=30)
@@ -267,18 +325,25 @@ class LemeHostRenewer:
         add_log(f"[SERVERS] 共 {len(servers)} 台")
         return servers
 
-    def _check_and_start_via_ws(self, server_id):
+    # ── WS 检查状态 + 开机 ──
+    def _check_and_start_via_ws(self, server_id: str) -> str:
+        """返回: 'started' / 'already_running' / 'failed'"""
         view_url = f"{BASE_URL}/server/view?id={server_id}"
         try:
             resp = self.session.get(view_url, timeout=30)
             html = resp.text
+
             ws_url_raw = self._ex(r'data-ws="([^"]+)"', html)
             if not ws_url_raw:
+                add_log(f"  [WS] ❌ 未找到 data-ws")
                 return "failed"
+
             ws_url = re.sub(r':\d+', '', ws_url_raw)
             page_token = self._ex(r'data-token="([^"]+)"', html)
             token_url = self._ex(r'data-token_url="([^"]+)"', html)
             csrf = self._ex(r'<meta\s+name="csrf-token"\s+content="([^"]+)"', html)
+
+            # 获取新鲜 token
             ws_token = page_token
             if token_url:
                 token_url = token_url.replace("&amp;", "&")
@@ -297,79 +362,118 @@ class LemeHostRenewer:
                             ws_url = re.sub(r':\d+', '', ret_ws)
                 except Exception:
                     pass
+
             if not ws_token:
+                add_log(f"  [WS] ❌ 无 token")
                 return "failed"
+
             add_log(f"  [WS] 连接 {server_id}...")
+
             ws = websocket.WebSocket()
-            ws.connect(ws_url, origin="https://lemehost.com",
-                       host=re.search(r'wss://([^/]+)', ws_url).group(1),
-                       header=[f"User-Agent: {USER_AGENT}", "Cache-Control: no-cache"],
-                       sslopt={"cert_reqs": ssl.CERT_NONE}, timeout=15)
+            ws.connect(
+                ws_url,
+                origin="https://lemehost.com",
+                host=re.search(r'wss://([^/]+)', ws_url).group(1),
+                header=[f"User-Agent: {USER_AGENT}", "Cache-Control: no-cache"],
+                sslopt={"cert_reqs": ssl.CERT_NONE},
+                timeout=15,
+            )
+
             ws.send(json.dumps({"event": "auth", "args": [ws_token]}))
+
             start_time = time.time()
-            authed = sent_start = False
+            authed = False
+            sent_start = False
+
             while time.time() - start_time < 15:
                 try:
                     ws.settimeout(3)
                     msg = ws.recv()
                     if not msg:
                         break
+
                     data = json.loads(msg)
                     event = data.get("event", "")
                     args = data.get("args", [])
+
                     if event == "auth success":
                         authed = True
+
                     elif event == "status":
                         status = args[0] if args else ""
                         add_log(f"  [WS] {server_id} 状态: {status}")
+
                         if status == "offline":
                             add_log(f"  [WS] ✅ 确认 offline，开机...")
                             ws.send(json.dumps({"event": "set state", "args": ["start"]}))
                             sent_start = True
                             time.sleep(2)
-                            try: ws.close()
-                            except: pass
+                            try:
+                                ws.close()
+                            except Exception:
+                                pass
                             self._started_servers.add(server_id)
                             worker_status["starts"] += 1
                             return "started"
+
                         elif status == "stopping":
-                            add_log(f"  [WS] ⏳ 正在停止...")
+                            add_log(f"  [WS] ⏳ 正在停止，等待...")
+                            # 继续监听等 offline
+
                         elif status in ["starting", "running"]:
                             add_log(f"  [WS] ✅ 已在线 ({status})")
-                            try: ws.close()
-                            except: pass
+                            try:
+                                ws.close()
+                            except Exception:
+                                pass
                             self._started_servers.add(server_id)
                             return "already_running"
+
                     elif event == "stats":
                         try:
                             stats = json.loads(args[0]) if args else {}
                             state = stats.get("state", "")
                             if state == "offline" and authed and not sent_start:
+                                add_log(f"  [WS] stats offline，开机...")
                                 ws.send(json.dumps({"event": "set state", "args": ["start"]}))
+                                sent_start = True
                                 time.sleep(2)
-                                try: ws.close()
-                                except: pass
+                                try:
+                                    ws.close()
+                                except Exception:
+                                    pass
                                 self._started_servers.add(server_id)
                                 worker_status["starts"] += 1
                                 return "started"
                             elif state in ["starting", "running"]:
-                                try: ws.close()
-                                except: pass
+                                try:
+                                    ws.close()
+                                except Exception:
+                                    pass
                                 self._started_servers.add(server_id)
                                 return "already_running"
-                        except: pass
+                        except Exception:
+                            pass
+
                     elif event == "token expired":
                         break
+
                 except websocket.WebSocketTimeoutException:
                     continue
-                except: break
-            try: ws.close()
-            except: pass
+                except Exception:
+                    break
+
+            try:
+                ws.close()
+            except Exception:
+                pass
             return "failed"
+
         except Exception as e:
             add_log(f"  [WS] ❌ {e}")
             return "failed"
 
+    # ── 检查 + 开机 + 续期 ──
     def check_and_renew(self, server_id, server_name=""):
         result = {
             "success": False, "server_id": server_id, "server_name": server_name,
@@ -380,7 +484,6 @@ class LemeHostRenewer:
         try:
             resp = self.session.get(url, timeout=30)
             html = resp.text
-
             auto_ts = 0
             m = re.search(r'id="countdown"\s+data-timestamp="(\d+)"', html)
             if m: auto_ts = int(m.group(1))
@@ -388,12 +491,10 @@ class LemeHostRenewer:
                 m = re.search(r'data-timestamp="(\d+)"[^>]*id="countdown"', html)
                 if m: auto_ts = int(m.group(1))
             remain = ts_remaining(auto_ts) if auto_ts else -1
-
             del_ts = 0
             m = re.search(r'countdown-free-plan-delete[^>]*data-timestamp="(\d+)"', html)
             if m: del_ts = int(m.group(1))
-
-            # 是否需要开机
+            # ── 是否需要开机 ──
             need_check = False
             if remain == 0:
                 need_check = True
@@ -404,7 +505,6 @@ class LemeHostRenewer:
                 add_log(f"  [CHECK] {server_id} ⚠️ 停机提示")
             if server_id in self._started_servers and remain > 0:
                 need_check = False
-
             if need_check:
                 ws_result = self._check_and_start_via_ws(server_id)
                 if ws_result == "started":
@@ -420,10 +520,12 @@ class LemeHostRenewer:
                     del_ts = 0
                     m = re.search(r'countdown-free-plan-delete[^>]*data-timestamp="(\d+)"', html)
                     if m: del_ts = int(m.group(1))
-
+                elif ws_result == "already_running":
+                    pass
+                else:
+                    add_log(f"  [CHECK] {server_id} ⚠️ WS 检查失败")
             if remain > 0:
                 self._started_servers.discard(server_id)
-
             result["remain_seconds"] = remain
             if remain >= 0:
                 result["remaining"] = fmt_seconds(remain)
@@ -436,18 +538,15 @@ class LemeHostRenewer:
                     return result
             else:
                 add_log(f"  [CHECK] {server_id} 未获取到倒计时")
-
             if del_ts:
                 result["old_expiry"] = ts_to_cn(del_ts)
-
             csrf = self._ex(r'name="_csrf-frontend"\s+value="([^"]+)"', html)
             if not csrf:
                 csrf = self._ex(r'<meta\s+name="csrf-token"\s+content="([^"]+)"', html)
             if not csrf:
                 result["message"] = "CSRF 获取失败"
                 return result
-
-            # 检测续期验证码
+            # ── 检测续期页是否需要验证码 ──
             has_captcha = "extendfreeplanform-captcha-image" in html
             captcha_value = ""
             if has_captcha:
@@ -458,41 +557,13 @@ class LemeHostRenewer:
                 if cap_url:
                     captcha_value = self._solve_captcha(cap_url, min_len=6, max_len=7, max_try=15)
                 if not captcha_value:
+                    add_log("  [RENEW] ❌ 续期验证码识别失败")
                     result["message"] = "续期验证码识别失败"
                     return result
-
             add_log(f"  [RENEW] 🔄 续期: {server_id}" + (f" (captcha={captcha_value})" if captcha_value else ""))
             time.sleep(random.uniform(0.5, 1.5))
-
-            # 续期重试30轮
-            html3 = html
+            # ── 提交续期（最多重试30轮验证码） ──
             for renew_try in range(30):
-                if has_captcha:
-                    cap_url = self._ex(r'id="extendfreeplanform-captcha-image"\s+src="([^"]+)"', html if renew_try == 0 else html3)
-                    if cap_url and cap_url.startswith("/"):
-                        cap_url = BASE_URL + cap_url
-                    if not cap_url:
-                        break
-                    # 刷新验证码
-                    if renew_try > 0:
-                        try:
-                            ref = self.session.get(f"{BASE_URL}/site/captcha?refresh=1", timeout=10)
-                            u = ref.json().get("url", "")
-                            if u:
-                                cap_url = u if u.startswith("http") else BASE_URL + u
-                        except Exception:
-                            pass
-                    captcha_value = self._solve_captcha(cap_url)
-                    if not captcha_value:
-                        add_log(f"  [RENEW] ⏭️ 第{renew_try+1}轮无结果")
-                        continue
-                    add_log(f"  [RENEW] 🔄 续期: {server_id} (captcha={captcha_value}) 第{renew_try+1}轮")
-                else:
-                    captcha_value = ""
-                    if renew_try > 0:
-                        break
-                    add_log(f"  [RENEW] 🔄 续期: {server_id}")
-
                 self.session.post(url, data={
                     "_csrf-frontend": csrf,
                     "ExtendFreePlanForm[captcha]": captcha_value,
@@ -505,32 +576,35 @@ class LemeHostRenewer:
                 time.sleep(random.uniform(1, 2))
                 resp3 = self.session.get(url, timeout=30)
                 html3 = resp3.text
-
-                csrf = self._ex(r'name="_csrf-frontend"\s+value="([^"]+)"', html3)
-                if not csrf:
-                    csrf = self._ex(r'<meta\s+name="csrf-token"\s+content="([^"]+)"', html3)
-
+                # 检查验证码是否错误
                 if has_captcha and ("verification code is incorrect" in html3.lower() or "Captcha cannot be blank" in html3):
-                    add_log(f"  [RENEW] ❌ 验证码错误 (第{renew_try+1}轮)")
-                    time.sleep(random.uniform(0.3, 0.6))
-                    continue
+                    add_log(f"  [RENEW] ❌ 续期验证码错误 (第{renew_try + 1}次)")
+                    csrf = self._ex(r'name="_csrf-frontend"\s+value="([^"]+)"', html3)
+                    if not csrf:
+                        csrf = self._ex(r'<meta\s+name="csrf-token"\s+content="([^"]+)"', html3)
+                    cap_url = self._ex(r'id="extendfreeplanform-captcha-image"\s+src="([^"]+)"', html3)
+                    if cap_url and cap_url.startswith("/"):
+                        cap_url = BASE_URL + cap_url
+                    if cap_url and csrf:
+                        captcha_value = self._solve_captcha(cap_url, min_len=6, max_len=7, max_try=15)
+                        if captcha_value:
+                            continue
+                    break
                 else:
                     break
-
+            # ── 验证结果 ──
             new_del = 0
             m = re.search(r'countdown-free-plan-delete[^>]*data-timestamp="(\d+)"', html3)
             if m: new_del = int(m.group(1))
             new_auto = 0
             m = re.search(r'id="countdown"\s+data-timestamp="(\d+)"', html3)
             if m: new_auto = int(m.group(1))
-
             if new_del:
                 result["new_expiry"] = ts_to_cn(new_del)
             if new_auto:
                 nr = ts_remaining(new_auto)
                 result["remaining"] = fmt_seconds(nr)
                 result["remain_seconds"] = nr
-
             if del_ts > 0 and new_del > del_ts:
                 result["success"] = True
                 result["message"] = "续期成功"
@@ -547,7 +621,6 @@ class LemeHostRenewer:
                     result["message"] = "到期时间未变化"
             else:
                 result["message"] = "续期结果未知"
-
         except Exception as e:
             result["message"] = f"异常: {e}"
             add_log(f"  [RENEW] ❌ {e}")
