@@ -1,5 +1,6 @@
 # 在 Hugging Face 免费部署自动 LemeHost 续期 带自动开机功能
 # ⭐ **觉得有用？给个 Star 支持一下！**
+> 注册地址：https://lemehost.com/
 
 ## 📖 简介
 
