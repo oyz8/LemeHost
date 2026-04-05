@@ -74,7 +74,7 @@ websocket-client>=1.6.0
 
 #### `app.py`
 
-把完整的 `app.py` 代码粘贴进去
+把完整的 [app.py](./app.py) 代码粘贴进去
 
 ### 第四步：等待启动
 
