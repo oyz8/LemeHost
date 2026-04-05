@@ -36,7 +36,7 @@
 
 | 变量名 | 值 | 必填 | 说明 |
 |--------|-----|------|------|
-| `LEME` | `邮箱-----密码` | ✅ 必填 | LemeHost 账号密码 |
+| `LEME` | `邮箱-----密码` | ✅ 必填 | LemeHost 账号密码 注意：不是邮箱密码 |
 | `TG_BOT_TOKEN` | Bot Token | 推荐 | Telegram 机器人 Token |
 | `TG_CHAT_ID` | Chat ID | 推荐 | Telegram 聊天 ID |
 | `TG_API` | 反代地址 | 推荐 | TG API 反代（HF 无法直连）[Cloudflare Workers 自建反代](./_worker.js) |
