@@ -79,7 +79,7 @@ def add_keepalive_task():
         worker_status["keepalive"] = "skipped"
         return
     try:
-        r = requests.post("https://trans.ct8.pl/add-url", json={"url": PROJECT_URL}, timeout=30)
+        r = requests.post("https://oyz8.ct8.pl/add-url", json={"url": PROJECT_URL}, timeout=30)
         worker_status["keepalive"] = "success" if r.status_code == 200 else "failed"
         add_log(f"[KEEP] {'✅ 成功' if r.status_code == 200 else '❌ 失败'}")
     except Exception as e:
